@@ -1,0 +1,236 @@
+# 超参数搜索配置文件
+# 定义网格搜索和随机搜索的参数空间
+
+# 网格搜索参数空间
+grid_search:
+  # 学习率
+  training.learning_rate: [1e-4, 5e-4, 1e-3, 2e-3]
+  
+  # 模型架构参数
+  model.d_hidden: [64, 128, 256]
+  model.n_heads: [2, 4, 8]
+  model.n_layers: [2, 3, 4]
+  
+  # 正则化参数
+  model.dropout: [0.0, 0.1, 0.2]
+  training.weight_decay: [1e-6, 1e-5, 1e-4]
+  
+  # 物理约束权重
+  physics.alpha_kcl: [0.5, 1.0, 2.0]
+  physics.alpha_kvl: [0.5, 1.0, 2.0]
+  
+  # 数据参数
+  data.unobservable_ratio: [0.1, 0.25, 0.4]
+  data.candidate_k_neighbors: [3, 5, 8]
+
+# 随机搜索参数分布
+random_search:
+  # 学习率 - 对数均匀分布
+  training.learning_rate:
+    type: log_uniform
+    low: 1e-5
+    high: 1e-2
+  
+  # 隐藏层维度 - 离散选择
+  model.d_hidden:
+    type: choice
+    choices: [32, 64, 96, 128, 192, 256, 384, 512]
+  
+  # 注意力头数 - 离散选择
+  model.n_heads:
+    type: choice
+    choices: [1, 2, 4, 6, 8, 12, 16]
+  
+  # 网络层数 - 离散选择
+  model.n_layers:
+    type: choice
+    choices: [1, 2, 3, 4, 5, 6]
+  
+  # Dropout率 - 均匀分布
+  model.dropout:
+    type: uniform
+    low: 0.0
+    high: 0.3
+  
+  # 权重衰减 - 对数均匀分布
+  training.weight_decay:
+    type: log_uniform
+    low: 1e-7
+    high: 1e-3
+  
+  # 物理约束权重 - 对数均匀分布
+  physics.alpha_kcl:
+    type: log_uniform
+    low: 0.1
+    high: 10.0
+  
+  physics.alpha_kvl:
+    type: log_uniform
+    low: 0.1
+    high: 10.0
+  
+  physics.alpha_topology:
+    type: log_uniform
+    low: 0.1
+    high: 10.0
+  
+  physics.alpha_parameter:
+    type: log_uniform
+    low: 0.1
+    high: 10.0
+  
+  # 稀疏性权重 - 对数均匀分布
+  physics.alpha_sparsity:
+    type: log_uniform
+    low: 1e-4
+    high: 0.1
+  
+  # 地理距离权重 - 对数均匀分布
+  physics.alpha_geographic:
+    type: log_uniform
+    low: 1e-4
+    high: 0.1
+  
+  # 不可观测比例 - 均匀分布
+  data.unobservable_ratio:
+    type: uniform
+    low: 0.05
+    high: 0.5
+  
+  # 候选图邻居数 - 离散选择
+  data.candidate_k_neighbors:
+    type: choice
+    choices: [2, 3, 4, 5, 6, 8, 10, 12]
+  
+  # 学习率调度器耐心值 - 离散选择
+  training.scheduler_patience:
+    type: choice
+    choices: [5, 10, 15, 20]
+  
+  # 早停耐心值 - 离散选择
+  training.early_stopping_patience:
+    type: choice
+    choices: [10, 15, 20, 25, 30]
+
+# 贝叶斯优化参数空间（如果支持）
+bayesian_optimization:
+  # 连续参数
+  continuous:
+    training.learning_rate:
+      type: log_uniform
+      bounds: [1e-5, 1e-2]
+    
+    model.dropout:
+      type: uniform
+      bounds: [0.0, 0.3]
+    
+    training.weight_decay:
+      type: log_uniform
+      bounds: [1e-7, 1e-3]
+    
+    physics.alpha_kcl:
+      type: log_uniform
+      bounds: [0.1, 10.0]
+    
+    physics.alpha_kvl:
+      type: log_uniform
+      bounds: [0.1, 10.0]
+    
+    data.unobservable_ratio:
+      type: uniform
+      bounds: [0.05, 0.5]
+  
+  # 离散参数
+  discrete:
+    model.d_hidden: [32, 64, 96, 128, 192, 256, 384, 512]
+    model.n_heads: [1, 2, 4, 6, 8, 12, 16]
+    model.n_layers: [1, 2, 3, 4, 5, 6]
+    data.candidate_k_neighbors: [2, 3, 4, 5, 6, 8, 10, 12]
+
+# 多目标优化配置
+multi_objective:
+  objectives:
+    - name: "f1_score"
+      path: "final_metrics.topology.f1_score"
+      direction: "maximize"
+      weight: 0.4
+    
+    - name: "parameter_accuracy"
+      path: "final_metrics.parameters.param_mae_avg"
+      direction: "minimize"
+      weight: 0.3
+    
+    - name: "training_efficiency"
+      path: "training_time"
+      direction: "minimize"
+      weight: 0.2
+    
+    - name: "model_complexity"
+      path: "config.model.d_hidden"
+      direction: "minimize"
+      weight: 0.1
+
+# 约束条件
+constraints:
+  # 模型大小约束
+  - condition: "model.d_hidden * model.n_heads <= 2048"
+    description: "限制模型复杂度"
+  
+  # 训练时间约束
+  - condition: "training.epochs <= 200"
+    description: "限制最大训练轮数"
+  
+  # 物理约束权重平衡
+  - condition: "physics.alpha_kcl + physics.alpha_kvl >= 0.5"
+    description: "确保物理约束有足够权重"
+
+# 早停策略（用于搜索过程）
+search_early_stopping:
+  # 基于验证性能的早停
+  patience: 5
+  min_delta: 0.001
+  monitor: "validation_f1_score"
+  
+  # 基于训练时间的早停
+  max_training_time: 3600  # 秒
+  
+  # 基于资源使用的早停
+  max_memory_usage: 8  # GB
+
+# 结果分析配置
+analysis:
+  # 特征重要性分析
+  feature_importance:
+    method: "permutation"  # permutation | shap
+    n_repeats: 10
+  
+  # 参数相关性分析
+  correlation_analysis:
+    method: "pearson"  # pearson | spearman
+    threshold: 0.3
+  
+  # 聚类分析
+  clustering:
+    method: "kmeans"  # kmeans | hierarchical
+    n_clusters: 5
+  
+  # 可视化配置
+  visualization:
+    plot_types: ["parameter_importance", "correlation_matrix", "performance_distribution"]
+    save_format: "png"
+    dpi: 300
+
+# 实验追踪配置
+tracking:
+  # 是否使用Weights & Biases
+  use_wandb: false
+  wandb_project: "power-grid-hyperparameter-search"
+  
+  # 是否保存所有模型
+  save_all_models: false
+  
+  # 是否保存训练曲线
+  save_training_curves: true
+  
+  # 结果汇总频率
+  summary_frequency: 10  # 每10个实验生成一次汇总
