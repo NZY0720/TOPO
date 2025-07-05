@@ -23,7 +23,7 @@ from ..models.physics_loss import PhysicsConstrainedLoss
 from ..evaluation.metrics import TopologyMetrics, ParameterMetrics
 from ..utils.logging_utils import setup_logger, log_metrics
 from ..utils.io_utils import save_checkpoint, load_checkpoint
-from ..visualization.training_viz import plot_training_curves
+from ..visualization.train_viz import plot_training_curves
 
 
 class EarlyStopping:

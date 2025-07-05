@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Data loading and preprocessing for Power Grid Topology Reconstruction
+Updated for actual data format
 """
 
 import os
@@ -20,7 +21,7 @@ from ..utils.io_utils import load_csv_safe
 
 
 class PowerGridDataLoader:
-    """电力网格数据加载器"""
+    """电力网格数据加载器 - 适配实际数据格式"""
     
     def __init__(self, config: DataConfig):
         self.config = config
@@ -30,12 +31,26 @@ class PowerGridDataLoader:
         self.loading_ts = None
         self.loads = None
         self.generators = None
+        self.final_state = None
         self.scaler = None
         
         # 缓存的特征
         self._node_features_cache = {}
         self._candidate_graph_cache = None
         self._true_topology_cache = None
+        
+        # 实际数据文件名映射
+        self.file_mapping = {
+            'buses': '1MVurban0sw_bus_with_local_coords.csv',
+            'lines': '1MVurban0sw_lines_with_coordinates.csv', 
+            'voltage_ts': '1MVurban0sw_voltage_timeseries.csv',
+            'loading_ts': '1MVurban0sw_loading_timeseries.csv',
+            'loads': '1MVurban0sw_loads_with_coordinates.csv',
+            'generators': '1MVurban0sw_generators_with_coordinates.csv',
+            'final_state': '1MVurban0sw_final_state_with_coords.csv',
+            'summary_stats': '1MVurban0sw_summary_statistics.csv',
+            'original_coords': '1MVurban0sw_original_coordinates.csv'
+        }
         
     def load_data(self, data_path: Optional[str] = None) -> None:
         """加载所有数据文件"""
@@ -45,35 +60,48 @@ class PowerGridDataLoader:
         self.data_path = data_path
         
         try:
-            # 加载核心数据文件
-            self.buses = load_csv_safe(
-                os.path.join(data_path, self.config.bus_file)
-            )
-            self.lines = load_csv_safe(
-                os.path.join(data_path, self.config.line_file)
-            )
-            self.voltage_ts = load_csv_safe(
-                os.path.join(data_path, self.config.voltage_ts_file)
-            )
-            self.loading_ts = load_csv_safe(
-                os.path.join(data_path, self.config.loading_ts_file)
-            )
+            # 1. 加载节点数据 (buses)
+            buses_file = os.path.join(data_path, self.file_mapping['buses'])
+            self.buses = load_csv_safe(buses_file)
+            print(f"✅ 节点数据加载完成: {len(self.buses)} 个节点")
             
-            # 加载可选数据文件
-            if self.config.loads_file:
-                loads_path = os.path.join(data_path, self.config.loads_file)
-                if os.path.exists(loads_path):
-                    self.loads = load_csv_safe(loads_path)
-                    
-            if self.config.generators_file:
-                gen_path = os.path.join(data_path, self.config.generators_file)
-                if os.path.exists(gen_path):
-                    self.generators = load_csv_safe(gen_path)
+            # 2. 加载线路数据 (lines)
+            lines_file = os.path.join(data_path, self.file_mapping['lines'])
+            self.lines = load_csv_safe(lines_file)
+            print(f"✅ 线路数据加载完成: {len(self.lines)} 条线路")
+            
+            # 3. 加载电压时间序列
+            voltage_file = os.path.join(data_path, self.file_mapping['voltage_ts'])
+            self.voltage_ts = load_csv_safe(voltage_file)
+            print(f"✅ 电压时间序列加载完成: {len(self.voltage_ts)} 个时间步")
+            
+            # 4. 加载负载时间序列
+            loading_file = os.path.join(data_path, self.file_mapping['loading_ts'])
+            self.loading_ts = load_csv_safe(loading_file)
+            print(f"✅ 负载时间序列加载完成: {len(self.loading_ts)} 个时间步")
+            
+            # 5. 加载负载数据 (可选)
+            loads_file = os.path.join(data_path, self.file_mapping['loads'])
+            if os.path.exists(loads_file):
+                self.loads = load_csv_safe(loads_file)
+                print(f"✅ 负载数据加载完成: {len(self.loads)} 个负载点")
+            
+            # 6. 加载发电机数据 (可选)
+            gen_file = os.path.join(data_path, self.file_mapping['generators'])
+            if os.path.exists(gen_file):
+                self.generators = load_csv_safe(gen_file)
+                print(f"✅ 发电机数据加载完成: {len(self.generators)} 个发电机")
+            
+            # 7. 加载最终状态数据 (可选)
+            final_file = os.path.join(data_path, self.file_mapping['final_state'])
+            if os.path.exists(final_file):
+                self.final_state = load_csv_safe(final_file)
+                print(f"✅ 最终状态数据加载完成: {len(self.final_state)} 个状态")
             
             # 数据验证和清理
             self._validate_and_clean_data()
             
-            print(f"✅ 数据加载完成:")
+            print(f"\n📊 数据加载总结:")
             print(f"   - 节点数: {len(self.buses)}")
             print(f"   - 线路数: {len(self.lines)}")
             print(f"   - 时间步数: {len(self.voltage_ts)}")
@@ -85,32 +113,95 @@ class PowerGridDataLoader:
     
     def _validate_and_clean_data(self) -> None:
         """验证和清理数据"""
-        # 检查必要的列
-        required_bus_cols = ['x', 'y']
-        required_line_cols = ['from_bus', 'to_bus', 'in_service']
+        print("🔧 数据验证和清理...")
         
-        for col in required_bus_cols:
-            if col not in self.buses.columns:
-                raise ValueError(f"节点数据缺少必要列: {col}")
-                
-        for col in required_line_cols:
-            if col not in self.lines.columns:
-                raise ValueError(f"线路数据缺少必要列: {col}")
+        # 1. 验证节点数据
+        if self.buses is not None:
+            # 检查必要的列
+            required_bus_cols = ['x', 'y', 'vn_kv', 'type']
+            missing_cols = [col for col in required_bus_cols if col not in self.buses.columns]
+            if missing_cols:
+                print(f"⚠️  节点数据缺少列: {missing_cols}")
+            
+            # 数据清理
+            self.buses['x'] = pd.to_numeric(self.buses['x'], errors='coerce').fillna(0.0)
+            self.buses['y'] = pd.to_numeric(self.buses['y'], errors='coerce').fillna(0.0)
+            self.buses['vn_kv'] = pd.to_numeric(self.buses['vn_kv'], errors='coerce').fillna(1.0)
+            self.buses['voltLvl'] = self.buses.get('voltLvl', 1).fillna(1)
+            self.buses['type'] = self.buses.get('type', 'b').fillna('b')
+            
+            # 重置索引确保连续性
+            self.buses = self.buses.reset_index(drop=True)
+            print(f"   ✅ 节点数据验证完成: {len(self.buses)} 个有效节点")
         
-        # 填充缺失值
-        self.buses['x'] = self.buses['x'].fillna(0.0)
-        self.buses['y'] = self.buses['y'].fillna(0.0)
-        self.buses['voltLvl'] = self.buses.get('voltLvl', 1.0).fillna(1.0)
-        self.buses['type'] = self.buses.get('type', 'b').fillna('b')
+        # 2. 验证线路数据
+        if self.lines is not None:
+            required_line_cols = ['from_bus', 'to_bus', 'in_service']
+            missing_cols = [col for col in required_line_cols if col not in self.lines.columns]
+            if missing_cols:
+                print(f"⚠️  线路数据缺少列: {missing_cols}")
+            
+            # 数据清理
+            self.lines['from_bus'] = pd.to_numeric(self.lines['from_bus'], errors='coerce')
+            self.lines['to_bus'] = pd.to_numeric(self.lines['to_bus'], errors='coerce')
+            self.lines['in_service'] = self.lines.get('in_service', True).fillna(True)
+            
+            # 线路参数处理
+            self.lines['r_ohm_per_km'] = pd.to_numeric(
+                self.lines.get('r_ohm_per_km', 0.1), errors='coerce'
+            ).fillna(0.1)
+            self.lines['x_ohm_per_km'] = pd.to_numeric(
+                self.lines.get('x_ohm_per_km', 0.1), errors='coerce'
+            ).fillna(0.1)
+            self.lines['length_km'] = pd.to_numeric(
+                self.lines.get('length_km', 0.1), errors='coerce'
+            ).fillna(0.1)
+            
+            # 移除无效线路
+            invalid_lines = (
+                self.lines['from_bus'].isna() | 
+                self.lines['to_bus'].isna() |
+                (self.lines['from_bus'] >= len(self.buses)) |
+                (self.lines['to_bus'] >= len(self.buses))
+            )
+            
+            if invalid_lines.any():
+                print(f"⚠️  移除 {invalid_lines.sum()} 条无效线路")
+                self.lines = self.lines[~invalid_lines].reset_index(drop=True)
+            
+            print(f"   ✅ 线路数据验证完成: {len(self.lines)} 条有效线路")
         
-        # 确保线路参数存在
-        self.lines['r_ohm_per_km'] = self.lines.get('r_ohm_per_km', 0.1).fillna(0.1)
-        self.lines['x_ohm_per_km'] = self.lines.get('x_ohm_per_km', 0.1).fillna(0.1)
-        self.lines['length_km'] = self.lines.get('length_km', 0.1).fillna(0.1)
+        # 3. 验证时间序列数据
+        if self.voltage_ts is not None:
+            # 检查节点电压列是否存在
+            expected_bus_cols = [f'bus_{i}' for i in range(len(self.buses))]
+            available_bus_cols = [col for col in expected_bus_cols if col in self.voltage_ts.columns]
+            
+            if len(available_bus_cols) < len(self.buses):
+                print(f"⚠️  电压时间序列缺少部分节点数据")
+                print(f"     期望: {len(self.buses)} 个节点，实际: {len(available_bus_cols)} 个节点")
+            
+            print(f"   ✅ 电压时间序列验证完成: {len(self.voltage_ts)} 个时间步")
         
-        # 重置索引确保一致性
-        self.buses = self.buses.reset_index(drop=True)
-        self.lines = self.lines.reset_index(drop=True)
+        # 4. 验证负载数据
+        if self.loads is not None:
+            # 确保负载的bus索引有效
+            valid_load_buses = self.loads['bus'] < len(self.buses)
+            if not valid_load_buses.all():
+                print(f"⚠️  移除 {(~valid_load_buses).sum()} 个无效负载")
+                self.loads = self.loads[valid_load_buses].reset_index(drop=True)
+            
+            print(f"   ✅ 负载数据验证完成: {len(self.loads)} 个负载点")
+        
+        # 5. 验证发电机数据
+        if self.generators is not None:
+            # 确保发电机的bus索引有效
+            valid_gen_buses = self.generators['bus'] < len(self.buses)
+            if not valid_gen_buses.all():
+                print(f"⚠️  移除 {(~valid_gen_buses).sum()} 个无效发电机")
+                self.generators = self.generators[valid_gen_buses].reset_index(drop=True)
+            
+            print(f"   ✅ 发电机数据验证完成: {len(self.generators)} 个发电机")
     
     def mask_unobservable_nodes(self, ratio: Optional[float] = None, 
                                seed: Optional[int] = None) -> np.ndarray:
@@ -187,18 +278,24 @@ class PowerGridDataLoader:
         
         # 1. 电气测量特征
         if bus.get('observed', True):
-            # 电压特征
+            # 电压特征（从时间序列获取）
             voltage = self._get_voltage_measurement(bus_idx, time_step)
-            v_real = voltage * np.cos(0)  # 假设相角为0
+            
+            # 将电压转换为实部虚部（假设相角为0，简化处理）
+            v_real = voltage * np.cos(0)  
             v_imag = voltage * np.sin(0)
             
-            # 功率特征
+            # 功率特征（从负载数据获取或模拟）
             p_load, q_load = self._get_power_measurements(bus_idx, time_step)
+            
+            # 发电机功率（如果该节点有发电机）
+            p_gen, q_gen = self._get_generator_measurements(bus_idx)
+            
         else:
             # 不可观测节点特征置零
-            v_real = v_imag = p_load = q_load = 0.0
+            v_real = v_imag = p_load = q_load = p_gen = q_gen = 0.0
         
-        features.extend([v_real, v_imag, p_load, q_load])
+        features.extend([v_real, v_imag, p_load, q_load, p_gen, q_gen])
         
         # 2. 空间特征
         x_coord = float(bus['x'])
@@ -212,13 +309,16 @@ class PowerGridDataLoader:
         features.extend([x_coord, y_coord])
         
         # 3. 结构特征
-        volt_level = float(bus['voltLvl'])
+        volt_level = float(bus.get('vn_kv', 1.0))  # 使用实际电压等级
         bus_type_encoding = self._encode_bus_type(bus.get('type', 'b'))
         is_observed = float(bus.get('observed', True))
         
-        features.extend([volt_level, bus_type_encoding, is_observed])
+        # 添加子网信息（如果有）
+        subnet_encoding = self._encode_subnet(bus.get('subnet', 'default'))
         
-        # 4. 网络拓扑特征（可选）
+        features.extend([volt_level, bus_type_encoding, is_observed, subnet_encoding])
+        
+        # 4. 网络拓扑特征
         degree = self._get_node_degree(bus_idx)
         features.append(degree)
         
@@ -231,29 +331,65 @@ class PowerGridDataLoader:
         if (self.voltage_ts is not None and 
             voltage_col in self.voltage_ts.columns and 
             time_step < len(self.voltage_ts)):
-            return float(self.voltage_ts.iloc[time_step][voltage_col])
+            voltage = self.voltage_ts.iloc[time_step][voltage_col]
+            return float(voltage) if pd.notna(voltage) else 1.0
         else:
             # 默认标幺值
             return 1.0 + np.random.normal(0, 0.02)
     
     def _get_power_measurements(self, bus_idx: int, time_step: int) -> Tuple[float, float]:
         """获取功率测量值"""
-        if self.loads is not None:
-            load_data = self.loads[self.loads['bus'] == bus_idx]
-            if not load_data.empty:
-                p_load = float(load_data.iloc[0].get('p_mw', 0))
-                q_load = float(load_data.iloc[0].get('q_mvar', 0))
-                return p_load, q_load
+        p_load = q_load = 0.0
         
-        # 模拟负载数据
-        p_load = np.random.normal(0.05, 0.02)
-        q_load = np.random.normal(0.02, 0.01)
+        if self.loads is not None:
+            # 查找该节点的负载
+            bus_loads = self.loads[self.loads['bus'] == bus_idx]
+            if not bus_loads.empty:
+                for _, load in bus_loads.iterrows():
+                    p_load += float(load.get('p_mw', 0))
+                    q_load += float(load.get('q_mvar', 0))
+        
+        # 如果没有负载数据，使用小的随机值
+        if p_load == 0 and q_load == 0:
+            p_load = max(0, np.random.normal(0.02, 0.01))
+            q_load = max(0, np.random.normal(0.01, 0.005))
+        
         return p_load, q_load
+    
+    def _get_generator_measurements(self, bus_idx: int) -> Tuple[float, float]:
+        """获取发电机功率测量值"""
+        p_gen = q_gen = 0.0
+        
+        if self.generators is not None:
+            # 查找该节点的发电机
+            bus_gens = self.generators[self.generators['bus'] == bus_idx]
+            if not bus_gens.empty:
+                for _, gen in bus_gens.iterrows():
+                    if gen.get('in_service', True):
+                        p_gen += float(gen.get('p_mw', 0))
+                        q_gen += float(gen.get('q_mvar', 0))
+        
+        return p_gen, q_gen
     
     def _encode_bus_type(self, bus_type: str) -> float:
         """编码节点类型"""
-        type_mapping = {'b': 0, 'db': 1, 'auxiliary': 2}
-        return float(type_mapping.get(bus_type, 0))
+        type_mapping = {
+            'b': 0,      # 普通节点
+            'db': 1,     # 分布式节点  
+            'auxiliary': 2,  # 辅助节点
+            'n': 0,      # 节点
+            'gen': 3,    # 发电机节点
+            'load': 4    # 负载节点
+        }
+        return float(type_mapping.get(str(bus_type).lower(), 0))
+    
+    def _encode_subnet(self, subnet: str) -> float:
+        """编码子网信息"""
+        if pd.isna(subnet) or subnet == 'default':
+            return 0.0
+        
+        # 简单的哈希编码
+        return float(hash(str(subnet)) % 10)
     
     def _get_node_degree(self, bus_idx: int) -> float:
         """获取节点度数（在真实拓扑中）"""
@@ -281,7 +417,7 @@ class PowerGridDataLoader:
             )
             
             # 确保图连通性
-            if edge_index.size(1) > 0:
+            if edge_index.shape[1] > 0:
                 edge_index = ensure_connected_graph(edge_index, len(self.buses))
             
             self._candidate_graph_cache = (
@@ -299,26 +435,35 @@ class PowerGridDataLoader:
         true_edges = []
         true_params = []
         
-        for _, line in self.lines.iterrows():
-            if (line.get('in_service', True) and 
-                pd.notna(line.get('from_bus')) and 
-                pd.notna(line.get('to_bus'))):
-                
-                from_bus = int(line['from_bus'])
-                to_bus = int(line['to_bus'])
-                
-                # 确保节点索引有效
-                if from_bus < len(self.buses) and to_bus < len(self.buses):
-                    true_edges.append([from_bus, to_bus])
+        if self.lines is not None:
+            for _, line in self.lines.iterrows():
+                # 检查线路是否投运且有效
+                if (line.get('in_service', True) and 
+                    pd.notna(line.get('from_bus')) and 
+                    pd.notna(line.get('to_bus'))):
                     
-                    # 计算线路参数
-                    r_per_km = float(line.get('r_ohm_per_km', 0.1))
-                    x_per_km = float(line.get('x_ohm_per_km', 0.1))
-                    length = float(line.get('length_km', 0.1))
+                    from_bus = int(line['from_bus'])
+                    to_bus = int(line['to_bus'])
                     
-                    r_total = r_per_km * length
-                    x_total = x_per_km * length
-                    true_params.append([r_total, x_total])
+                    # 确保节点索引有效
+                    if (from_bus < len(self.buses) and to_bus < len(self.buses) and
+                        from_bus >= 0 and to_bus >= 0 and from_bus != to_bus):
+                        
+                        true_edges.append([from_bus, to_bus])
+                        
+                        # 计算线路参数
+                        r_per_km = float(line.get('r_ohm_per_km', 0.1))
+                        x_per_km = float(line.get('x_ohm_per_km', 0.1))
+                        length = float(line.get('length_km', 0.1))
+                        
+                        r_total = r_per_km * length
+                        x_total = x_per_km * length
+                        
+                        # 确保参数为正数
+                        r_total = max(r_total, 1e-6)
+                        x_total = max(x_total, 1e-6)
+                        
+                        true_params.append([r_total, x_total])
         
         if true_edges:
             true_edge_index = torch.tensor(true_edges, dtype=torch.long).t().contiguous()
@@ -362,16 +507,80 @@ class PowerGridDataLoader:
             'num_nodes': len(self.buses),
             'num_lines': len(self.lines) if self.lines is not None else 0,
             'num_time_steps': len(self.voltage_ts) if self.voltage_ts is not None else 0,
+            'num_loads': len(self.loads) if self.loads is not None else 0,
+            'num_generators': len(self.generators) if self.generators is not None else 0,
             'observable_ratio': self.buses.get('observed', True).mean() if 'observed' in self.buses.columns else 1.0,
             'feature_dim': len(self._extract_node_features(self.buses.iloc[0], 0, 0)),
             'spatial_extent_x': self.buses['x'].max() - self.buses['x'].min(),
             'spatial_extent_y': self.buses['y'].max() - self.buses['y'].min(),
         }
         
+        # 电压等级分布
+        if 'vn_kv' in self.buses.columns:
+            info['voltage_levels'] = sorted(self.buses['vn_kv'].unique().tolist())
+        
+        # 线路长度统计
+        if self.lines is not None and 'length_km' in self.lines.columns:
+            info['avg_line_length'] = float(self.lines['length_km'].mean())
+            info['max_line_length'] = float(self.lines['length_km'].max())
+            info['min_line_length'] = float(self.lines['length_km'].min())
+        
         return info
+    
+    def get_network_statistics(self) -> Dict[str, Any]:
+        """获取网络统计信息"""
+        stats = {}
+        
+        if self.buses is not None:
+            stats['nodes'] = {
+                'total': len(self.buses),
+                'voltage_levels': self.buses['vn_kv'].value_counts().to_dict() if 'vn_kv' in self.buses.columns else {},
+                'node_types': self.buses['type'].value_counts().to_dict() if 'type' in self.buses.columns else {}
+            }
+        
+        if self.lines is not None:
+            stats['lines'] = {
+                'total': len(self.lines),
+                'in_service': self.lines['in_service'].sum() if 'in_service' in self.lines.columns else len(self.lines),
+                'avg_length': float(self.lines['length_km'].mean()) if 'length_km' in self.lines.columns else 0,
+                'total_length': float(self.lines['length_km'].sum()) if 'length_km' in self.lines.columns else 0
+            }
+        
+        if self.loads is not None:
+            stats['loads'] = {
+                'total': len(self.loads),
+                'total_p': float(self.loads['p_mw'].sum()) if 'p_mw' in self.loads.columns else 0,
+                'total_q': float(self.loads['q_mvar'].sum()) if 'q_mvar' in self.loads.columns else 0
+            }
+        
+        if self.generators is not None:
+            stats['generators'] = {
+                'total': len(self.generators),
+                'in_service': self.generators['in_service'].sum() if 'in_service' in self.generators.columns else len(self.generators),
+                'total_p': float(self.generators['p_mw'].sum()) if 'p_mw' in self.generators.columns else 0,
+                'total_q': float(self.generators['q_mvar'].sum()) if 'q_mvar' in self.generators.columns else 0
+            }
+        
+        return stats
     
     def clear_cache(self) -> None:
         """清除所有缓存"""
         self._node_features_cache.clear()
         self._candidate_graph_cache = None
         self._true_topology_cache = None
+    
+    def save_processed_data(self, output_path: str) -> None:
+        """保存处理后的数据"""
+        processed_data = {
+            'buses': self.buses,
+            'lines': self.lines,
+            'loads': self.loads,
+            'generators': self.generators,
+            'config': self.config.__dict__
+        }
+        
+        import pickle
+        with open(output_path, 'wb') as f:
+            pickle.dump(processed_data, f)
+        
+        print(f"✅ 处理后的数据已保存到: {output_path}")

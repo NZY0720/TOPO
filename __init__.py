@@ -25,7 +25,7 @@ from .utils.logging_utils import setup_logger
 
 # 导入可视化函数
 from .visualization.network_viz import plot_topology_comparison
-from .visualization.training_viz import plot_training_curves
+from .visualization.train_viz import plot_training_curves
 
 # 版本信息
 __all__ = [

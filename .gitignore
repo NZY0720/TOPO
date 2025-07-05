@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 
 /data/local_coords_results_1_MV_urban__0_sw/
+/outputs/
 # pytest 缓存
 .pytest_cache/
 
