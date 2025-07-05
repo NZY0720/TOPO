@@ -1,0 +1,12 @@
+# Python byte-code & cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+/data/local_coords_results_1_MV_urban__0_sw/
+# pytest 缓存
+.pytest_cache/
+
+# 虚拟环境（可按需启用）
+venv/
+.env/
